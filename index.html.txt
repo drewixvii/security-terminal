@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S.C.P. TERMINAL v3.4.1</title>
+    <style>
+        :root {
+            --term-green: #00ff41;
+            --term-dim: #003b00;
+            --alert-red: #ff3e3e;
+            --bg-black: #0a0a0a;
+            --ui-border: rgba(0, 255, 65, 0.3);
+            --scanline-color: rgba(18, 16, 16, 0.1);
+        }
+
+        @font-face {
+            font-family: 'Terminus';
+            src: local('Courier New'), local('Courier');
+        }
+
+        * { box-sizing: border-box; cursor: crosshair; }
+
+        body {
+            background-color: var(--bg-black);
+            color: var(--term-green);
+            font-family: 'Terminus', monospace;
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            text-transform: uppercase;
+        }
+
+        /* --- CRT & SCANLINE OVERLAYS --- */
+        body::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(var(--scanline-color) 50%, rgba(0, 0, 0, 0.1) 50%), 
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            z-index: 100;
+            background-size: 100% 3px, 2px 100%;
+            pointer-events: none;
+        }
+
+        /* --- BOOT SEQUENCE --- */
+        #boot-screen {
+            position: fixed;
+            inset: 0;
+            background: black;
+            z-index: 999;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+        }
+
+        .boot-line { margin: 2px 0; opacity: 0; animation: fadeIn 0.1s forwards; }
+        @keyframes fadeIn { to { opacity: 1; } }
+
+        /* --- MAIN INTERFACE LAYOUT --- */
+        #main-interface {
+            display: grid;
+            grid-template-columns: 300px 1fr 300px;
+            grid-template-rows: 60px 1fr 200px;
+            height: 100vh;
+            gap: 10px;
+            padding: 10px;
+            visibility: hidden;
+        }
+
+        header {
+            grid-column: 1 / -1;
+            border: 1px solid var(--ui-border);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            justify-content: space-between;
+            background: rgba(0, 255, 65, 0.05);
+        }
+
+        .panel {
+            border: 1px solid var(--ui-border);
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        /* --- NAVIGATION PANEL --- */
+        .nav-btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: transparent;
+            border: 1px solid var(--term-dim);
+            color: var(--term-green);
+            text-align: left;
+            font-family: inherit;
+            transition: 0.3s;
+        }
+        .nav-btn.active { background: var(--term-dim); border-color: var(--term-green); }
+        .nav-btn:hover:not(.locked) { background: rgba(0, 255, 65, 0.1); }
+        .nav-btn.locked { color: #444; border-color: #222; }
+
+        /* --- CENTER DISPLAY / CAM FEED --- */
+        #display-canvas {
+            grid-column: 2;
+            position: relative;
+            background: #050505;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .cam-feed {
+            flex: 1;
+            border: 2px solid var(--term-dim);
+            position: relative;
+            background-image: radial-gradient(circle, #111 0%, #000 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .cam-label {
+            position: absolute;
+            top: 20px; left: 20px;
+            font-size: 1.2rem;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 15px;
+            z-index: 5;
+        }
+
+        .cam-static {
+            position: absolute;
+            inset: 0;
+            background: url('https://media.giphy.com/media/oEI9uWUicGLeU/giphy.gif');
+            opacity: 0.07;
+            mix-blend-mode: screen;
+            pointer-events: none;
+        }
+
+        /* --- TERMINAL PANEL --- */
+        #terminal-input-zone {
+            grid-column: 1 / -1;
+            background: black;
+            border-top: 2px solid var(--term-green);
+            display: flex;
+            flex-direction: column;
+            padding: 15px;
+        }
+
+        #term-output { height: 100px; overflow-y: auto; font-size: 0.9rem; margin-bottom: 10px; }
+        .input-line { display: flex; align-items: center; }
+        #main-input {
+            background: transparent;
+            border: none;
+            color: var(--term-green);
+            font-family: inherit;
+            font-size: 1.1rem;
+            width: 100%;
+            outline: none;
+            padding-left: 10px;
+        }
+
+        /* --- ANIMATIONS & GLITCHES --- */
+        .glitch-shake { animation: shake 0.2s cubic-bezier(.36,.07,.19,.97) both; }
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-2px, 0, 0); }
+            20%, 80% { transform: translate3d(4px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+            40%, 60% { transform: translate3d(6px, 0, 0); }
+        }
+
+        .flicker { animation: flickerAnim 0.1s infinite; }
+        @keyframes flickerAnim {
+            0% { opacity: 0.9; }
+            50% { opacity: 1; }
+            100% { opacity: 0.8; }
+        }
+
+        .hidden { display: none !important; }
+
+        /* --- FINAL OVERRIDE --- */
+        #final-overlay {
+            position: fixed; inset: 0; background: white; color: black;
+            z-index: 1000; display: none; align-items: center; justify-content: center;
+            flex-direction: column; text-align: center; font-weight: bold;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- FINAL COMPLETION SCREEN -->
+    <div id="final-overlay">
+        <h1 style="font-size: 5rem; margin: 0;">SYSTEM RESTORED</h1>
+        <p style="font-size: 1.5rem;">ACCESS GRANTED: FULL CLEARANCE</p>
+        <p id="final-message"></p>
+        <div style="margin-top: 40px; border: 2px solid black; padding: 20px;">
+            STATION STATUS: OFFLINE
+        </div>
+    </div>
+
+    <!-- BOOT SEQUENCE CONTAINER -->
+    <div id="boot-screen"></div>
+
+    <!-- MAIN SYSTEM INTERFACE -->
+    <div id="main-interface">
+        <header>
+            <div>SYSTEM STATUS: <span id="sys-status" class="flicker">FUNCTIONAL</span></div>
+            <div>STATION: 04-B / FREDUS</div>
+            <div id="clock">00:00:00</div>
+        </header>
+
+        <!-- Sidebar: Nav -->
+        <aside class="panel">
+            <h3>SECURE CHANNELS</h3>
+            <button class="nav-btn active" onclick="switchTab('terminal')">ACCESS TERMINAL</button>
+            <button class="nav-btn locked" id="nav-cam" onclick="switchTab('cam')">CAM FEEDS [LOCKED]</button>
+            <button class="nav-btn locked" id="nav-logs" onclick="switchTab('logs')">SYSTEM LOGS [LOCKED]</button>
+            <hr style="border: 0.5px solid var(--ui-border); margin: 20px 0;">
+            <div id="stage-indicators">
+                <div style="font-size: 0.7rem; color: var(--term-dim);">Progress:</div>
+                <div id="progress-dots" style="letter-spacing: 5px; font-size: 1.2rem;">□ □ □ □ □</div>
+            </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <main id="display-canvas" class="panel">
+            
+            <!-- Terminal View -->
+            <div id="view-terminal">
+                <h2 id="terminal-title">> ENCRYPTION GATEWAY</h2>
+                <p>AWAITING INPUT OF PHYSICAL ACCESS KEYS...</p>
+                <div class="log-box" id="hint-display" style="border: 1px dashed var(--term-green); padding: 15px; margin-top: 20px;">
+                    INITIAL CLUE: Start where the first watcher sits. Check the front door ledge.
+                </div>
+            </div>
+
+            <!-- Cam View -->
+            <div id="view-cam" class="hidden">
+                <div class="cam-feed">
+                    <div class="cam-static"></div>
+                    <div class="cam-label" id="cam-name">CAM XX - NULL</div>
+                    <div id="cam-visual-placeholder" style="font-size: 5rem; opacity: 0.1;">[ NO SIGNAL ]</div>
+                </div>
+                <div class="log-box" style="padding: 15px; border-top: 1px solid var(--ui-border);">
+                    <strong>INTERNAL LOG:</strong> <span id="cam-log-text">---</span>
+                    <br><br>
+                    <strong style="color: yellow;">PHYSICAL CLUE:</strong> <span id="cam-clue-text">---</span>
+                </div>
+            </div>
+
+            <!-- Logs View -->
+            <div id="view-logs" class="hidden">
+                <h3>ARCHIVED TRANSCRIPTS</h3>
+                <div id="log-list"></div>
+            </div>
+
+        </main>
+
+        <!-- Right Side: System Info -->
+        <aside class="panel">
+            <h3>SYSTEM LOGS</h3>
+            <div id="side-logs" style="font-size: 0.7rem; line-height: 1.4;">
+                [12:00:01] System Booted...<br>
+                [12:00:05] Waiting for User...<br>
+            </div>
+        </aside>
+
+        <!-- Footer: Input Area -->
+        <footer id="terminal-input-zone">
+            <div id="term-output"></div>
+            <div class="input-line">
+                <span>SYSTEM@SECURE_USER:~$</span>
+                <input type="text" id="main-input" autofocus autocomplete="off" spellcheck="false">
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        /* --- CONFIGURATION & DATA --- */
+        const SYSTEM_DATA = {
+            "CAM01": {
+                name: "CAM 01 - ENTRANCE HALL",
+                log: "Motion sensors triggered at 02:14. Frame jitter detected. Something is obscuring the lens.",
+                clue: "Go to the place where the cold wind lives inside the house (The Refrigerator).",
+                next: "Find the code taped to the juice box.",
+                transcript: "LOG 01: Maintenance reported a strange hum in the ventilation. Ignored for now."
+            },
+            "CAM02": {
+                name: "CAM 02 - STORAGE B",
+                log: "Asset #441 has shifted 3 feet to the left. Power draw spiking in this sector.",
+                clue: "Seek the throne of rest where the screen glows blue (The Living Room Sofa).",
+                next: "Check under the cushions.",
+                transcript: "LOG 02: We found footprints in the dust. None of the staff wear size 14 metal boots."
+            },
+            "CAM03": {
+                name: "CAM 03 - SERVICE CORRIDOR",
+                log: "Visual corruption heavy. Audio sensors picking up a rhythmic tapping. 'Clang. Clang. Clang.'",
+                clue: "Find the book that tells no stories, only dates (The Calendar).",
+                next: "Look behind the month of December.",
+                transcript: "LOG 03: The backup generator is failing. We might be in the dark soon."
+            },
+            "CAM04": {
+                name: "CAM 04 - PRIMARY OFFICE",
+                log: "System override detected. Someone is accessing the terminal from inside the facility.",
+                clue: "The final key is hidden where you clean the day away (The Shower/Bathroom).",
+                next: "Look behind the mirror.",
+                transcript: "LOG 04: If you're reading this, you've almost unlocked the override. Be careful."
+            },
+            "FINAL": {
+                message: "You found the source. The system is yours now. Happy Scavenger Hunt!"
+            }
+        };
+
+        const bootLines = [
+            "ROM BIOS Version 1.04", "Copyright (C) 1987-2026", "CPU: Zilog Z80 @ 4MHz", "Memory Test: 640K OK",
+            "Initializing Security Protocol...", "Loading Driver: CAM_DRV.SYS", "Loading Driver: GLITCH_CORE.DLL",
+            "Connecting to Faz-Net...", "ACCESS ESTABLISHED.", "READY..."
+        ];
+
+        let unlockedStages = [];
+        let currentTab = 'terminal';
+
+        /* --- CORE ENGINE --- */
+
+        window.onload = () => {
+            runBootSequence();
+            updateClock();
+            setInterval(updateClock, 1000);
+            
+            // Random Glitch Engine
+            setInterval(() => {
+                if(Math.random() > 0.95) triggerGlitch();
+            }, 3000);
+        };
+
+        function runBootSequence() {
+            const container = document.getElementById('boot-screen');
+            bootLines.forEach((line, i) => {
+                setTimeout(() => {
+                    const div = document.createElement('div');
+                    div.className = 'boot-line';
+                    div.innerText = `> ${line}`;
+                    container.appendChild(div);
+                }, i * 300);
+            });
+
+            setTimeout(() => {
+                container.style.display = 'none';
+                document.getElementById('main-interface').style.visibility = 'visible';
+                logToSystem("User Session Started.");
+            }, (bootLines.length + 1) * 300);
+        }
+
+        const input = document.getElementById('main-input');
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const val = input.value.toUpperCase().trim();
+                handleCommand(val);
+                input.value = '';
+            }
+        });
+
+        function handleCommand(cmd) {
+            logToTerminal(`> ${cmd}`);
+            
+            if (cmd === 'FINAL' && unlockedStages.length >= 4) {
+                triggerFinalSequence();
+                return;
+            }
+
+            if (SYSTEM_DATA[cmd]) {
+                if (unlockedStages.includes(cmd)) {
+                    logToTerminal("ERROR: ACCESS KEY ALREADY ACTIVE.");
+                } else {
+                    unlockStage(cmd);
+                }
+            } else {
+                logToTerminal("ACCESS DENIED: INVALID KEYCODE.");
+                logToSystem(`Unauthorized attempt: ${cmd}`);
+                triggerGlitch(true);
+            }
+        }
+
+        function unlockStage(code) {
+            unlockedStages.push(code);
+            const data = SYSTEM_DATA[code];
+            
+            // UI Updates
+            document.getElementById('nav-cam').classList.remove('locked');
+            document.getElementById('nav-logs').classList.remove('locked');
+            document.getElementById('sys-status').innerText = "ANOMALY DETECTED";
+            document.getElementById('sys-status').style.color = "var(--alert-red)";
+            
+            // Progress dots
+            const dots = "■ ".repeat(unlockedStages.length) + "□ ".repeat(5 - unlockedStages.length);
+            document.getElementById('progress-dots').innerText = dots;
+
+            logToTerminal(`SUCCESS: ${code} UNLOCKED.`);
+            logToSystem(`Sector ${code} decryption complete.`);
+            
+            // Auto-Switch to Cam
+            loadCamData(code);
+            switchTab('cam');
+            triggerGlitch();
+
+            // Add to logs tab
+            const logEntry = document.createElement('div');
+            logEntry.style.marginBottom = "15px";
+            logEntry.innerHTML = `<span style="color:yellow">[DECRYPTED]</span> ${data.transcript}`;
+            document.getElementById('log-list').appendChild(logEntry);
+        }
+
+        function loadCamData(code) {
+            const data = SYSTEM_DATA[code];
+            document.getElementById('cam-name').innerText = data.name;
+            document.getElementById('cam-log-text').innerText = data.log;
+            document.getElementById('cam-clue-text').innerText = data.clue;
+            
+            const hintDisplay = document.getElementById('hint-display');
+            hintDisplay.innerHTML = `<strong>LATEST MISSION:</strong><br>${data.clue}<br><br><small>NEXT CODE HINT: ${data.next}</small>`;
+        }
+
+        function switchTab(tab) {
+            if (tab !== 'terminal' && unlockedStages.length === 0) {
+                logToTerminal("ACCESS DENIED: NAV-LOCK ACTIVE.");
+                return;
+            }
+
+            currentTab = tab;
+            ['view-terminal', 'view-cam', 'view-logs'].forEach(v => document.getElementById(v).classList.add('hidden'));
+            document.getElementById(`view-${tab}`).classList.remove('hidden');
+            
+            document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+        }
+
+        /* --- UI UTILITIES --- */
+
+        function logToTerminal(msg) {
+            const out = document.getElementById('term-output');
+            const line = document.createElement('div');
+            line.innerText = msg;
+            out.appendChild(line);
+            out.scrollTop = out.scrollHeight;
+        }
+
+        function logToSystem(msg) {
+            const out = document.getElementById('side-logs');
+            const time = new Date().toLocaleTimeString();
+            out.innerHTML = `[${time}] ${msg}<br>` + out.innerHTML;
+        }
+
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').innerText = now.toLocaleTimeString();
+        }
+
+        function triggerGlitch(isError = false) {
+            const body = document.body;
+            body.classList.add('glitch-shake');
+            if(isError) body.style.filter = "invert(1) sepia(1) saturate(5) hue-rotate(300deg)";
+            
+            setTimeout(() => {
+                body.classList.remove('glitch-shake');
+                body.style.filter = "none";
+            }, 200);
+        }
+
+        function triggerFinalSequence() {
+            const overlay = document.getElementById('final-overlay');
+            document.getElementById('final-message').innerText = SYSTEM_DATA["FINAL"].message;
+            
+            document.body.style.transition = "background 0.1s";
+            let flashes = 0;
+            const interval = setInterval(() => {
+                document.body.style.background = flashes % 2 === 0 ? "white" : "black";
+                flashes++;
+                if(flashes > 10) {
+                    clearInterval(interval);
+                    overlay.style.display = 'flex';
+                }
+            }, 50);
+        }
+    </script>
+</body>
+</html>
